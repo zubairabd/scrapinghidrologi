@@ -1,0 +1,92 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+from google.colab import files
+import urllib3
+import time
+
+# 1. Matikan warning SSL (agar output bersih)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# 2. Konfigurasi Range Grid (1 s.d 2456)
+grids = range(1, 2457)
+
+# 3. Header PENTING (Agar dianggap browser Chrome, bukan bot)
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+}
+
+bulan = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des","Tahunan"]
+data_all = []
+filename = "curah_hujan_2019_complete.csv"
+
+print(f"Mulai mengambil data untuk {len(grids)} Grid (Tahun 2019)...")
+print("Data akan disimpan otomatis (checkpoint) setiap 100 grid.\n")
+
+start_time = time.time()
+
+for index, grid in enumerate(grids, 1):
+    # Print progress biar tahu script masih jalan
+    if index % 50 == 0:
+        elapsed = time.time() - start_time
+        print(f"[{index}/{len(grids)}] Memproses TRMM-{grid}... (Waktu: {elapsed:.0f}s)")
+
+    url = f"https://hidrologi.net/hujanbulanantrmm/{grid}"
+
+    try:
+        # Tambahkan headers=headers dan verify=False
+        resp = requests.get(url, headers=headers, verify=False, timeout=10)
+
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            rows = soup.find_all("tr")
+
+            data_found = False
+            for row in rows:
+                cells = [c.get_text(strip=True) for c in row.find_all("td")]
+
+                # Cari baris yang depannya angka "2019"
+                if cells and cells[0] == "2019":
+                    nilai_hujan = cells[1:] # Ambil data setelah tahun
+
+                    # Pastikan kolomnya lengkap
+                    if len(nilai_hujan) >= 13:
+                        hasil = {"Grid": f"TRMM-{grid:04d}"} # Format TRMM-0001
+                        for i in range(len(bulan)):
+                            hasil[bulan[i]] = nilai_hujan[i]
+
+                        data_all.append(hasil)
+                        data_found = True
+                    break # Stop cari di tabel ini kalau 2019 sudah ketemu
+
+            if not data_found:
+                # Opsi: Jika mau mencatat grid yang kosong
+                # print(f"Grid {grid}: Data 2019 tidak ditemukan.")
+                pass
+
+    except Exception as e:
+        print(f"Error Grid {grid}: {e}")
+        continue
+
+    # --- FITUR PENGAMAN (CHECKPOINT) ---
+    # Simpan CSV setiap 100 data.
+
+    if index % 100 == 0:
+        df_temp = pd.DataFrame(data_all)
+        df_temp.to_csv(filename, index=False)
+        print(f"   >> Checkpoint tersimpan: {len(df_temp)} data.")
+
+# --- FINALISASI ---
+print("\nSelesai! Menyimpan file akhir...")
+df = pd.DataFrame(data_all)
+
+# Reorder kolom biar rapi (Grid di kiri)
+cols = ["Grid"] + bulan
+if not df.empty:
+    df = df[cols]
+
+df.to_csv(filename, index=False)
+print(f"Total Data Berhasil: {len(df)}")
+print(df.head())
+# Download
+files.download(filename)
